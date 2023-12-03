@@ -13,9 +13,7 @@
 #define WIFI_SUCC_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
 
-static const char *TAG = "Z_QUICK";
-static const char *TAG_STA = "Z_QUICK_STA";
-static const char *TAG_AP = "Z_QUICK_AP";
+static const char *TAG = "Z_QUICK_WIFI";
 
 static EventGroupHandle_t s_wifi_event_group;
 
@@ -30,40 +28,40 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         switch (event_id)
         {
         case WIFI_EVENT_STA_START: // STA模式启动
-            ESP_LOGI(TAG_STA, "STA connect start");
+            ESP_LOGI(TAG, "STA connect start");
             esp_wifi_connect();
             break;
 
         case WIFI_EVENT_STA_STOP: // STA模式关闭
-            ESP_LOGI(TAG_STA, "STA connect stop");
+            ESP_LOGI(TAG, "STA connect stop");
             break;
 
         case WIFI_EVENT_STA_CONNECTED:
-            ESP_LOGI(TAG_STA, "wifi connect successful!");
+            ESP_LOGI(TAG, "wifi connect successful!");
             break;
 
         case WIFI_EVENT_STA_DISCONNECTED: // STA模式断开连接
             esp_wifi_connect();
-            ESP_LOGI(TAG_STA, "re-connecting...");
+            ESP_LOGI(TAG, "re-connecting...");
             break;
 
         case WIFI_EVENT_AP_START:
-            ESP_LOGI(TAG_AP, "AP start");
+            ESP_LOGI(TAG, "AP start");
             break;
 
         case WIFI_EVENT_AP_STOP:
-            ESP_LOGI(TAG_AP, "AP stop");
+            ESP_LOGI(TAG, "AP stop");
             break;
 
         case WIFI_EVENT_AP_STACONNECTED: {
             wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *)event_data;
-            ESP_LOGI(TAG_AP, "a device connected: mac:" MACSTR ", aid:%d", MAC2STR(event->mac), event->aid);
+            ESP_LOGI(TAG, "a device connected: mac:" MACSTR ", aid:%d", MAC2STR(event->mac), event->aid);
             break;
         }
 
         case WIFI_EVENT_AP_STADISCONNECTED: {
             wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *)event_data;
-            ESP_LOGI(TAG_AP, "device disconnect: mac:" MACSTR ", aid:%d", MAC2STR(event->mac), event->aid);
+            ESP_LOGI(TAG, "device disconnect: mac:" MACSTR ", aid:%d", MAC2STR(event->mac), event->aid);
             break;
         }
         default:
@@ -77,7 +75,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         {
         case IP_EVENT_STA_GOT_IP: { // esp32从路由器获取到ip
             ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-            ESP_LOGI(TAG_STA, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+            ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
             xEventGroupSetBits(s_wifi_event_group, WIFI_SUCC_BIT);
             break;
         }
@@ -94,16 +92,21 @@ z_wifi_controller::z_wifi_controller()
     s_wifi_event_group = xEventGroupCreate();
 }
 
-auto z_wifi_controller::connect_to(char *ssid, char *passwd) -> void
+auto z_wifi_controller::connect_to(const char *ssid, const char *passwd) -> void
 {
     esp_netif_create_default_wifi_sta();
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+
     esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
     esp_wifi_init(&cfg);
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any_id);
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip);
-    wifi_config_t wifi_config_sta{.sta{.threshold{.authmode{WIFI_AUTH_WPA2_PSK}}}};
+
+    wifi_config_t wifi_config_sta;
+    wifi_config_sta.sta.threshold.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+    // wifi_config_sta.sta.sae_pwe_h2e = WPA3_SAE_PWE_HUNT_AND_PECK;
+
     strcpy((char *)wifi_config_sta.sta.ssid, ssid);
     strcpy((char *)wifi_config_sta.sta.password, passwd);
     esp_wifi_set_mode(WIFI_MODE_STA);
