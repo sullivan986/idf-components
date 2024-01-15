@@ -19,6 +19,7 @@ static EventGroupHandle_t s_wifi_event_group;
 
 // ----------------------------------------------------------
 // wifi quick
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     ESP_LOGI(TAG, "event_base:%s, event_id:%ld", event_base, event_id);
@@ -87,8 +88,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
 
 z_wifi_controller::z_wifi_controller()
 {
-    esp_netif_init();
-    esp_event_loop_create_default();
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
     s_wifi_event_group = xEventGroupCreate();
 }
 
@@ -99,20 +100,19 @@ auto z_wifi_controller::connect_to(const char *ssid, const char *passwd) -> void
 
     esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
-    esp_wifi_init(&cfg);
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any_id);
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip);
 
-    wifi_config_t wifi_config_sta;
-    wifi_config_sta.sta.threshold.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+    wifi_config_t wifi_config_sta{};
+    wifi_config_sta.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config_sta.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     // wifi_config_sta.sta.sae_pwe_h2e = WPA3_SAE_PWE_HUNT_AND_PECK;
-
     strcpy((char *)wifi_config_sta.sta.ssid, ssid);
     strcpy((char *)wifi_config_sta.sta.password, passwd);
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta);
-    esp_wifi_start();
-    // 等待链接成功
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta));
+    ESP_ERROR_CHECK(esp_wifi_start()); // 等待链接成功
     xEventGroupWaitBits(s_wifi_event_group, WIFI_SUCC_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
     vEventGroupDelete(s_wifi_event_group);
     ESP_LOGI(TAG, "sta init finished");

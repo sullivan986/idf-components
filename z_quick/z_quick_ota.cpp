@@ -20,52 +20,59 @@
 
 static const char *TAG = "Z_QUICK_OTA";
 
-class Session : std::enable_shared_from_this<Session>
+using asio::ip::tcp;
+
+class session : public std::enable_shared_from_this<session>
 {
   public:
-    Session(asio::ip::tcp::socket sk) : sk_(std::move(sk))
+    session(tcp::socket socket) : socket_(std::move(socket))
     {
     }
 
-    void Start()
+    void start()
     {
-        auto p{shared_from_this()};
-        sk_.async_read_some(asio::buffer(data_, sizeof(data_)), [this, p](asio::error_code ec, size_t len) {
+        auto self{shared_from_this()};
+        socket_.async_read_some(asio::buffer(data_, max_length), [this, self](std::error_code ec, std::size_t length) {
             if (!ec)
             {
-                data_[len] = 0;
-                std::cout << std::format("recv: {}", data_);
-                Start();
+                data_[length] = 0;
+                std::cout << data_ << std::endl;
+                start();
+            }
+            else
+            {
+                ESP_LOGW(TAG, "socket disconnect");
             }
         });
     }
 
   private:
-    asio::ip::tcp::socket sk_;
-    char data_[1024];
+    tcp::socket socket_;
+    enum
+    {
+        max_length = 1024
+    };
+    char data_[max_length];
 };
 
-class OtaServer
+class server
 {
   public:
-    OtaServer(asio::io_context &io, short port) : acceptor_(io, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port))
+    server(asio::io_context &io_context, short port) : acceptor_(io_context, tcp::endpoint(tcp::v4(), port))
     {
-        Start();
+        do_accept();
     }
 
   private:
-    asio::ip::tcp::acceptor acceptor_;
-
-    void Start()
+    tcp::acceptor acceptor_;
+    void do_accept()
     {
-        ESP_LOGI(TAG, "accept");
-        acceptor_.async_accept([this](asio::error_code ec, asio::ip::tcp::socket sk) {
+        acceptor_.async_accept([this](std::error_code ec, tcp::socket socket) {
             if (!ec)
             {
-                std::make_shared<Session>(std::move(sk))->Start();
+                std::make_shared<session>(std::move(socket))->start();
             }
-
-            Start();
+            do_accept();
         });
     }
 };
@@ -73,15 +80,15 @@ class OtaServer
 void ota_thread()
 {
     asio::io_context io;
-    OtaServer os(io, 8001);
+    server os(io, 8001);
     io.run();
 }
 
 auto start_ota_server() -> void
 {
     auto cfg{esp_pthread_get_default_config()};
-    cfg.stack_size = 10 * 1024;
-    cfg.prio = 0;
+    cfg.stack_size = 12 * 1024;
+    cfg.prio = 1;
     cfg.thread_name = "ota";
     esp_pthread_set_cfg(&cfg);
     std::thread thread_ota(ota_thread);
