@@ -1,0 +1,4 @@
+#ifndef _Z_QUICK_ALGORITHM_HPP_
+#define _Z_QUICK_ALGORITHM_HPP_
+
+#endif
