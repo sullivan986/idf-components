@@ -445,9 +445,12 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
 }
 
 static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
-{ /* If event is register event, store the gatts_if for each profile */
-    if (event == ESP_GATTS_REG_EVT)
+{
+    // start event
+    switch (event)
     {
+    case ESP_GATTS_REG_EVT: {
+        /* If event is register event, store the gatts_if for each profile */
         if (param->reg.status == ESP_GATT_OK)
         {
             profile_tab.gatts_if = gatts_if;
@@ -457,17 +460,11 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
             ESP_LOGE(TAG, "reg app failed, app_id %04x, status %d", param->reg.app_id, param->reg.status);
             return;
         }
-    }
+        if (!(gatts_if == ESP_GATT_IF_NONE || gatts_if == profile_tab.gatts_if))
+        {
+            return;
+        }
 
-    if (!(gatts_if == ESP_GATT_IF_NONE || gatts_if == profile_tab.gatts_if))
-    {
-        return;
-    }
-
-    // start event
-    switch (event)
-    {
-    case ESP_GATTS_REG_EVT: {
         // config device name
         esp_err_t set_dev_name_ret = esp_bt_dev_set_device_name("ESP32_S3_SP");
         if (set_dev_name_ret)
@@ -497,7 +494,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     }
     break;
     case ESP_GATTS_READ_EVT: {
-        ESP_LOGI(TAG, "ESP_GATTS_READ_EVT");
+        ESP_LOGI(TAG, "BLE_READ");
         break;
     }
     break;
