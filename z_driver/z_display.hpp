@@ -3,37 +3,26 @@
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "esp_log.h"
 #include "hal/gpio_types.h"
 #include "soc/gpio_num.h"
 #include "z_base.hpp"
 #include "z_peripheral.hpp"
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
+#include <random>
 #include <span>
 #include <thread>
+#include <vector>
 
-template <int DC_Pin> class z_display_spi : public z_spi_master<DC_Pin>
+template <int DC_Pin, size_t Trans_Size> class z_display_spi : public z_spi_master<DC_Pin, Trans_Size>
 {
   public:
-    z_display_spi(int mosi_pin, int clk_pin, int rst_pin, int spi_mhz)
-        : z_spi_master<DC_Pin>(mosi_pin, clk_pin, spi_mhz), _rst_pin(rst_pin)
+    z_display_spi(int mosi_pin, int clk_pin, int spi_mhz) : z_spi_master<DC_Pin, Trans_Size>(mosi_pin, clk_pin, spi_mhz)
     {
-        reset();
-        soft_reset();
-    }
-
-    void soft_reset()
-    {
-        send_cmd(0x01);
-    }
-
-    void reset()
-    {
-        _rst_pin.n();
-        z_sleep_ms(100);
-        _rst_pin.set();
-        z_sleep_ms(100);
     }
 
     void send_cmd(uint8_t cmd)
@@ -41,49 +30,75 @@ template <int DC_Pin> class z_display_spi : public z_spi_master<DC_Pin>
         this->send_polling({{cmd}}, 0);
     }
 
-    void send_data_short(std::span<const uint8_t> data)
+    void send_cmd_queue(uint8_t cmd)
     {
-        this->send_polling(data, 1);
+        this->send_queue({{cmd}}, 0);
     }
 
-    void send_data_long(std::span<const uint8_t> data)
+    void send_data(std::span<const uint8_t> data)
     {
         this->send_polling(data, 1);
+        // if (data.size() != 2)
+        // {
+        //     // ESP_LOGI(TAG, "size : %d", data.size());
+        // }
+    }
+
+    void send_data_queue(std::span<const uint8_t> data)
+    {
+        this->send_queue(data, 1);
     }
 
   private:
-    z_gpio_ppout _rst_pin;
-    // static constexpr auto p = dc_pin::real_addr;
 };
 
-template <int DC_Pin> class z_display_spi_st7796 : public z_display_spi<DC_Pin>
+constexpr size_t get_buff_size(const size_t wide)
+{
+    return wide * 10 * 3;
+}
+
+template <int DC_Pin, size_t LCD_W = 320, size_t LCD_H = 360>
+class z_display_spi_st7796 : public z_display_spi<DC_Pin, get_buff_size(LCD_W)>
 {
   public:
-    z_display_spi_st7796(int mosi_pin, int clk_pin, int rst_pin) : z_display_spi<DC_Pin>(mosi_pin, clk_pin, rst_pin, 8)
+    static constexpr size_t _buff_size = get_buff_size(LCD_W);
+
+    z_display_spi_st7796(int mosi_pin, int clk_pin)
+        : z_display_spi<DC_Pin, _buff_size>(mosi_pin, clk_pin, 40),
+          buff_1(reinterpret_cast<uint8_t *>(_buff_1), _buff_size)
     {
+        _buff_1 = heap_caps_malloc(_buff_size, MALLOC_CAP_DMA);
+
+        // soft_reset
+        z_sleep_ms(120);
+        send_cmd(0x10); // changing mode to Sleep IN.
+        z_sleep_ms(120);
+        send_cmd(0x01); // soft_reset
+        z_sleep_ms(120);
+
         // Sleep out
         send_cmd(0x11);
         z_sleep_ms(50);
-        // 激活所有指令
+        // start setting
         send_cmd(0Xf0);
-        send_data_short({{0xc3}});
+        send_data({{0xc3}});
         send_cmd(0Xf0);
-        send_data_short({{0x96}});
+        send_data({{0x96}});
         // Memory Access Control
         send_cmd(0x36);
-        send_data_short({{0x48}});
-        // send 24bit(8+8+8)
+        send_data({{0x48}});
+        // 7 : 24bit(8+8+8) , 5 : 16bit(5+6+5)
         send_cmd(0x3a);
-        send_data_short({{0x07}});
+        send_data({{0x07}});
         // Inversion
         // send_cmd(0xb4);
-        // send_data_short({{0x01}});
+        // send_data({{0x01}});
         // ????
         // send_cmd(0xb6);
-        // send_data_short({{0x80, 0x02, 0x3b}});
+        // send_data({{0x80, 0x02, 0x3b}});
         // 周期时间
         send_cmd(0xe8);
-        send_data_short({{
+        send_data({{
             0x40,
             0x8a,
             0x00,
@@ -93,15 +108,15 @@ template <int DC_Pin> class z_display_spi_st7796 : public z_display_spi<DC_Pin>
             0xa5,
             0x33,
         }});
-        //
+        // power
         send_cmd(0Xc5);
-        send_data_short({{0x27}});
-        //
+        send_data({{0x27}});
+        // power
         send_cmd(0Xc2);
-        send_data_short({{0xa7}});
+        send_data({{0xa7}});
         // color GAMA adjust
         send_cmd(0Xe0);
-        send_data_short({{
+        send_data({{
             0xf0,
             0x01,
             0x06,
@@ -118,7 +133,7 @@ template <int DC_Pin> class z_display_spi_st7796 : public z_display_spi<DC_Pin>
             0x15,
         }});
         send_cmd(0Xe1);
-        send_data_short({{
+        send_data({{
             0xf0,
             0x01,
             0x05,
@@ -134,50 +149,63 @@ template <int DC_Pin> class z_display_spi_st7796 : public z_display_spi<DC_Pin>
             0x13,
             0x16,
         }});
-        //
+        // end setting
         send_cmd(0Xf0);
-        send_data_short({{0x3c}});
-        //
+        send_data({{0x3c}});
+        // end setting
         send_cmd(0Xf0);
-        send_data_short({{0x69}});
+        send_data({{0x69}});
+        // Inversion color
+        send_cmd(0X21);
+        // Display on
+        send_cmd(0X29);
     }
 
-    void LCD_SetPos(unsigned int Xstart, unsigned int Ystart, unsigned int Xend, unsigned int Yend)
+    void lcd_setraw(uint x_start, uint y_start, uint x_end, uint y_end, std::span<uint8_t> buff)
     {
-        uint8_t x1 = Xstart >> 8;
-        uint8_t x2 = Xstart;
-        uint8_t x3 = Xend >> 8;
-        uint8_t x4 = Xend;
-        uint8_t y1 = Ystart >> 8;
-        uint8_t y2 = Ystart;
-        uint8_t y3 = Yend >> 8;
-        uint8_t y4 = Yend;
-
-        send_cmd(0x2a);
-        send_data_short({{x1, x2, x3, x4}});
-        send_cmd(0x2b);
-        send_data_short({{y1, y2, y3, y4}});
-        send_cmd(0x2c); // LCD_WriteCMD(GRAMWR);
-    }
-#define LCD_W 320
-#define LCD_H 360
-    void ClearScreen(uint8_t R, uint8_t G, uint8_t B)
-    {
-        printf("ClearScreen");
-        unsigned int i, j;
-        LCD_SetPos(0, 0, LCD_W - 1, LCD_H - 1);
-        for (i = 0; i < LCD_H; i++)
+        //  await_send_finish();
+        // LCD_Write area
+        ESP_LOGI("tag", "11111");
+        if (flag_first_send)
         {
-            for (j = 0; j < LCD_W; j++)
-                send_data_short({{R, G, B}});
-        }
+            await_send_finish(6);
+        };
+        ESP_LOGI("tag", "22222");
+        static uint8_t d1 = x_start >> 8;
+        static uint8_t d2 = x_start;
+        static uint8_t d3 = x_end >> 8;
+        static uint8_t d4 = x_end;
+        static uint8_t d5 = y_start >> 8;
+        static uint8_t d6 = y_start;
+        static uint8_t d7 = y_end >> 8;
+        static uint8_t d8 = y_end;
+        send_cmd_queue(0x2a);
+        send_data_queue({{d1, d2, d3, d4}});
+        send_cmd_queue(0x2b);
+        send_data_queue({{d5, d6, d7, d8}});
+        send_cmd_queue(0x2c);
+        // send buff
+        send_data_queue(buff);
+        flag_first_send = true;
     }
+
+    std::span<uint8_t> buff_1;
+
+    size_t disp_w;
+    size_t disp_h;
 
   private:
     //  std::span<const uint8_t, 1024> _buff;
+    bool flag_first_send = false;
+    void *_buff_1;
+    void *_buff_2;
 
-    using z_display_spi<DC_Pin>::send_cmd;
-    using z_display_spi<DC_Pin>::send_data_short;
+    using _disp = z_display_spi<DC_Pin, _buff_size>;
+    using _disp::await_send_finish;
+    using _disp::send_cmd;
+    using _disp::send_cmd_queue;
+    using _disp::send_data;
+    using _disp::send_data_queue;
 };
 
 // using z_display_spi_st7796s = z_display_spi_st7796<>

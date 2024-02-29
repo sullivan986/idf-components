@@ -3,9 +3,11 @@
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "esp_log.h"
 #include "hal/gpio_types.h"
 #include "soc/gpio_num.h"
 #include "z_base.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <span>
@@ -46,8 +48,8 @@ class z_gpio_ppout : public z_gpio
         io_conf.pin_bit_mask = 1ULL << num;
         io_conf.mode = GPIO_MODE_OUTPUT;
         io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-        io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-        // io_conf.intr_type = NULL;
+        // io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        //  io_conf .intr_type = NULL;
         gpio_config(&io_conf);
     }
 
@@ -66,7 +68,7 @@ template <int DC_Pin> static void spi_pre_transfer_callback(spi_transaction_t *t
     gpio_set_level(static_cast<gpio_num_t>(DC_Pin), dc);
 }
 
-template <int DC_Pin> class z_spi_master
+template <int DC_Pin, size_t Trans_Size> class z_spi_master
 {
   public:
     // 无miso
@@ -77,11 +79,12 @@ template <int DC_Pin> class z_spi_master
         buscfg.miso_io_num = -1;
         buscfg.quadwp_io_num = -1;
         buscfg.quadhd_io_num = -1;
+        buscfg.max_transfer_sz = Trans_Size + 40;
         buscfg.sclk_io_num = clk_pin;
 
         spi_device_interface_config_t devcfg{};
         devcfg.mode = 0;
-        devcfg.clock_speed_hz = spi_mhz * 1000000;
+        devcfg.clock_speed_hz = spi_mhz * 1000 * 1000;
         devcfg.spics_io_num = -1;
         devcfg.queue_size = 7;
         devcfg.pre_cb = spi_pre_transfer_callback<DC_Pin>;
@@ -105,6 +108,26 @@ template <int DC_Pin> class z_spi_master
         t.tx_buffer = data.data();
         t.user = (void *)user;
         ESP_ERROR_CHECK(spi_device_polling_transmit(_spi, &t));
+    }
+
+    void send_queue(std::span<const uint8_t> data, int user)
+    {
+        spi_transaction_t t{};
+        t.length = data.size() * 8;
+        t.tx_buffer = data.data();
+        t.user = (void *)user;
+        ESP_ERROR_CHECK(spi_device_queue_trans(_spi, &t, portMAX_DELAY));
+    }
+
+    void await_send_finish(size_t times)
+    {
+        spi_transaction_t *rtrans;
+        esp_err_t ret;
+        for (int x = 0; x < times; x++)
+        {
+            ret = spi_device_get_trans_result(_spi, &rtrans, portMAX_DELAY);
+            assert(ret == ESP_OK);
+        }
     }
 
   private:
