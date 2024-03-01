@@ -8,6 +8,7 @@
 #include "soc/gpio_num.h"
 #include "z_base.hpp"
 #include "z_peripheral.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <memory>
 #include <random>
 #include <span>
+#include <sys/types.h>
 #include <thread>
 #include <vector>
 
@@ -27,6 +29,11 @@ template <int DC_Pin, size_t Trans_Size> class z_display_spi : public z_spi_mast
 
     void send_cmd(uint8_t cmd)
     {
+        this->send({{cmd}}, 0);
+    }
+
+    void send_cmd_polling(uint8_t cmd)
+    {
         this->send_polling({{cmd}}, 0);
     }
 
@@ -37,11 +44,12 @@ template <int DC_Pin, size_t Trans_Size> class z_display_spi : public z_spi_mast
 
     void send_data(std::span<const uint8_t> data)
     {
+        this->send(data, 1);
+    }
+
+    void send_data_polling(std::span<const uint8_t> data)
+    {
         this->send_polling(data, 1);
-        // if (data.size() != 2)
-        // {
-        //     // ESP_LOGI(TAG, "size : %d", data.size());
-        // }
     }
 
     void send_data_queue(std::span<const uint8_t> data)
@@ -52,27 +60,31 @@ template <int DC_Pin, size_t Trans_Size> class z_display_spi : public z_spi_mast
   private:
 };
 
-constexpr size_t get_buff_size(const size_t wide)
+constexpr size_t getbuff_size(const size_t wide)
 {
-    return wide * 10 * 3;
+    return wide * 20 * 3;
 }
 
 template <int DC_Pin, size_t LCD_W = 320, size_t LCD_H = 360>
-class z_display_spi_st7796 : public z_display_spi<DC_Pin, get_buff_size(LCD_W)>
+class z_display_spi_st7796 : public z_display_spi<DC_Pin, getbuff_size(LCD_W)>
 {
   public:
-    static constexpr size_t _buff_size = get_buff_size(LCD_W);
+    static constexpr size_t buff_size = getbuff_size(LCD_W);
 
-    z_display_spi_st7796(int mosi_pin, int clk_pin)
-        : z_display_spi<DC_Pin, _buff_size>(mosi_pin, clk_pin, 40),
-          buff_1(reinterpret_cast<uint8_t *>(_buff_1), _buff_size)
+    auto get_buff_span()
     {
-        _buff_1 = heap_caps_malloc(_buff_size, MALLOC_CAP_DMA);
+        return std::span<uint8_t>(reinterpret_cast<uint8_t *>(_buff_1), buff_size);
+    }
+
+    z_display_spi_st7796(int mosi_pin, int clk_pin) : z_display_spi<DC_Pin, buff_size>(mosi_pin, clk_pin, 40)
+    {
+        // ESP_LOGI("tag", "%d, %d", buff_size, buff_1.size());
+        _buff_1 = heap_caps_malloc(buff_size, MALLOC_CAP_DMA);
 
         // soft_reset
         z_sleep_ms(120);
         send_cmd(0x10); // changing mode to Sleep IN.
-        z_sleep_ms(120);
+        z_sleep_ms(240);
         send_cmd(0x01); // soft_reset
         z_sleep_ms(120);
 
@@ -161,16 +173,18 @@ class z_display_spi_st7796 : public z_display_spi<DC_Pin, get_buff_size(LCD_W)>
         send_cmd(0X29);
     }
 
-    void lcd_setraw(uint x_start, uint y_start, uint x_end, uint y_end, std::span<uint8_t> buff)
+    void lcd_setraw(size_t x_start, size_t y_start, size_t x_end, size_t y_end, std::span<uint8_t> data)
     {
         //  await_send_finish();
         // LCD_Write area
-        ESP_LOGI("tag", "11111");
-        if (flag_first_send)
-        {
-            await_send_finish(6);
-        };
-        ESP_LOGI("tag", "22222");
+        // auto size = (x_end - x_start + 1) * (y_end - y_start + 1);
+        // if (size > buff_size)
+        // {
+        //     ESP_LOGI("z_display", "buffer error");
+        //     return;
+        // }
+        // std::span<uint8_t> buff_1(reinterpret_cast<uint8_t *>(_buff_1), size);
+
         static uint8_t d1 = x_start >> 8;
         static uint8_t d2 = x_start;
         static uint8_t d3 = x_end >> 8;
@@ -179,28 +193,20 @@ class z_display_spi_st7796 : public z_display_spi<DC_Pin, get_buff_size(LCD_W)>
         static uint8_t d6 = y_start;
         static uint8_t d7 = y_end >> 8;
         static uint8_t d8 = y_end;
-        send_cmd_queue(0x2a);
-        send_data_queue({{d1, d2, d3, d4}});
-        send_cmd_queue(0x2b);
-        send_data_queue({{d5, d6, d7, d8}});
-        send_cmd_queue(0x2c);
+        send_cmd(0x2a);
+        send_data({{d1, d2, d3, d4}});
+        send_cmd(0x2b);
+        send_data({{d5, d6, d7, d8}});
+        send_cmd(0x2c);
         // send buff
-        send_data_queue(buff);
-        flag_first_send = true;
+        send_data(data);
     }
 
-    std::span<uint8_t> buff_1;
-
-    size_t disp_w;
-    size_t disp_h;
-
   private:
-    //  std::span<const uint8_t, 1024> _buff;
-    bool flag_first_send = false;
     void *_buff_1;
     void *_buff_2;
 
-    using _disp = z_display_spi<DC_Pin, _buff_size>;
+    using _disp = z_display_spi<DC_Pin, buff_size>;
     using _disp::await_send_finish;
     using _disp::send_cmd;
     using _disp::send_cmd_queue;

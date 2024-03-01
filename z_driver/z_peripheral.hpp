@@ -101,6 +101,15 @@ template <int DC_Pin, size_t Trans_Size> class z_spi_master
 
     z_gpio_ppout dc_pin;
 
+    void send(std::span<const uint8_t> data, int user)
+    {
+        spi_transaction_t t{};
+        t.length = data.size() * 8;
+        t.tx_buffer = data.data();
+        t.user = (void *)user;
+        ESP_ERROR_CHECK(spi_device_transmit(_spi, &t));
+    }
+
     void send_polling(std::span<const uint8_t> data, int user)
     {
         spi_transaction_t t{};
